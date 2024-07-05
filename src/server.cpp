@@ -17,11 +17,14 @@
 
 
 #define MAX_CLIENTS 10
+#define MAX_BYTES 4096
 
 // typedef struct cache_element cache_element;
 
 
 class cache_element{
+
+public :
     char*  data;   //storing data in char stream
     int len; //length of data
     char* url; //req goes to which url, so that when req comes again i can find it easily with that url
@@ -57,6 +60,100 @@ pthread_mutex_t lock;  // 0/1 lock for the cache
 cache_element* HEAD;  // global head of the linkedlist
 
 int cache_size; // size of cache
+
+
+void* thread_fn(void *socketNew){
+    sem_wait(&semaphore);
+    // int p;
+    int* p;  
+
+    sem_getvalue(&semaphore, p);  // only p gives error
+
+    printf("semaphore value is : %d\n", *p);
+
+    int *t = (int *)socketNew;   //??
+    int socket = *t;    // ??
+    int bytes_send_client, len;   // ???
+
+    char * buffer = (char*)calloc(MAX_BYTES, sizeof(char));  // calloc ???
+
+    // bzero
+    memset(buffer,0, MAX_BYTES);
+
+    bytes_send_client = recv(socket, buffer, MAX_BYTES, 0);  // receiving the input ???
+
+    while(bytes_send_client > 0){
+        len = strlen(buffer);
+        if(strstr(buffer, "\r\n\r\n") == NULL){
+          bytes_send_client = recv(socket, buffer + len, MAX_BYTES-len, 0); 
+        }else{
+            break;
+        }
+    }
+
+    char *tempReq = (char *)malloc(strlen(buffer)*sizeof(char)+1); //mem alloct and ptr for it
+
+    for(int i = 0; i < strlen(buffer); i++){
+        tempReq[i] = buffer[i];
+
+    }
+
+    cache_element* temp = find_in_cache(tempReq);
+    if(temp != NULL){
+        int size = temp->len/sizeof(char);
+        int pos = 0;
+        char res[MAX_BYTES];
+        while(pos < size){
+            memset(res, 0, MAX_BYTES);
+
+            for(int i = 0; i < MAX_BYTES; i++){
+                res[i] = temp->data[i];
+                pos++;
+            }
+
+            send(socket, res, MAX_BYTES, 0);
+
+        }
+        printf("data retrieved from the cache");
+        printf("%s\n\n", res);
+
+    }else if(bytes_send_client > 0 ){
+        len = strlen(buffer);
+        ParsedRequest *request = ParsedRequest_create();
+
+        if(ParsedRequest_parse(request, buffer, len) < 2){
+            printf("cannot parse request, PARSING FAILED");
+        }else{
+            memset(buffer, 0, MAX_BYTES);
+
+            if(!strcmp(request->method, "GET")){   // if req method is equal to get
+                if(request->host && request->path && checkHTTPversion(request->version) == 1){
+                    bytes_send_client = handle_request(socket, request, tempReq);
+                    if(bytes_send_client == -1){
+                        sendErrorMsg(socket, 500);
+                    }
+                }else{
+                    sendErrorMsg(socket, 500);
+                }
+            }else{
+                printf("this req is not GET plz send GET req");
+            }
+        }
+    }else if(bytes_send_client == 0){
+        printf("client is DC");
+    }   
+
+    shutdown(socket, SHUT_RDWR);
+
+    close(socket);
+    free(buffer);
+    sem_post(&semaphore);
+    sem_getvalue(&semaphore, p);
+    printf("semaphore for post value is %d\n", *p);
+    free(tempReq);
+
+    return NULL;
+}
 
 
 int main(int argc, char* argv[]){
@@ -154,7 +251,7 @@ int main(int argc, char* argv[]){
         inet_ntop(AF_INET, &ip_Add, str, INET6_ADDRSTRLEN);
         printf("client connected with port %d and ip address is %s\n", ntohs(client_Add.sin_port), str);   // all 4 lines above are for conversion of netword network to understandable address
 
-        pthread_create(&tid[i], NULL, thread_fn, (void *)&connected_socketId[i]);
+        // pthread_create(&tid[i], NULL, thread_fn, (void *)&connected_socketId[i]);
         // whichever client joined execute thread_fn for it,  and whichever client socket was opened use that socket, and if new client enter make a new socket for it
 
         i++;
