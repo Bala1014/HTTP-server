@@ -16,10 +16,17 @@
 #include <errno.h>
 
 
+// using namespace std;
+
 #define MAX_CLIENTS 10
 #define MAX_BYTES 4096
+#define MAX_ELEMENTS 1*(1<<20)
+#define MAX_CACHE_SIZE 200*(1<<20)
+
 
 // typedef struct cache_element cache_element;
+
+
 
 
 class cache_element{
@@ -34,22 +41,6 @@ public :
 };
 
 
-
-cache_element* find_in_cache(char* url){  //list 
-
-
-}
-
-
-int add_to_cache(char* data, int size, char* url){  //function to add to cache
-
-}
-
-void remove_from_cache(){  //function to remove from cache
-
-}
-
-
 int port = 3000;
 
 int proxy_socketID ;   // socket id
@@ -61,6 +52,188 @@ pthread_mutex_t lock;  // 0/1 lock for the cache
 cache_element* HEAD;  // global head of the linkedlist
 
 int cache_size; // size of cache
+
+
+
+cache_element* find_in_cache(char* url){  //list 
+    cache_element * site = NULL;
+
+    int temp_lock_val = pthread_mutex_lock(&lock);
+    printf("remove cache lock acquired %d\n",temp_lock_val);
+
+    if(!HEAD){
+        site = HEAD;
+        while(!site){
+            if(!strcmp(site->url, url)){
+                printf("LRU time before %ld", site->timeTrack);
+                printf("\nurl found\n");
+                site->timeTrack = time(NULL);
+                
+                printf("LRU time after %ld", site->timeTrack);
+                break;
+            }
+            site = site->next;
+        }
+
+    }else{
+        printf("url not found\n");
+    }
+
+    temp_lock_val = pthread_mutex_unlock(&lock);
+    printf("lock is removed\n");
+
+    return site;
+
+
+}
+
+void remove_from_cache(){  //function to remove from cache
+
+    cache_element *p,*q, *temp;
+
+    int temp_lock_val = pthread_mutex_lock(&lock);
+    printf("remove cache lock acquired %d\n",temp_lock_val);
+
+    if(!HEAD){
+        for(q = HEAD, p = HEAD, temp =HEAD; !q->next; q= q->next){
+
+            if(((q->next)->timeTrack) < (temp->timeTrack)){
+                temp = temp->next;
+                p = q;
+            }
+
+           
+
+
+        }
+
+        if(temp == HEAD){
+            HEAD = HEAD->next;
+
+        }else{
+            p->next = temp->next;
+        }
+
+        cache_size = cache_size - (temp->len) - sizeof(cache_element) - strlen(temp->url)-1;
+
+        free(temp->data);
+        free(temp->url);
+        free(temp);
+    }
+
+    temp_lock_val = pthread_mutex_unlock(&lock);
+
+    printf("remove cache lock\n");
+
+    
+
+
+}
+
+
+int add_to_cache(char* data, int size, char* url){  //function to add to cache
+
+    int temp_lock_val = pthread_mutex_lock(&lock);
+    printf("remove cache lock acquired %d\n",temp_lock_val);
+
+    int ele_size = size + 1+strlen(url) + sizeof(cache_element);
+
+    if(ele_size > MAX_ELEMENTS){ //cannot add element TOOO large
+        temp_lock_val = pthread_mutex_unlock(&lock);
+        printf("add cache lock is unloacked\n");
+
+
+    }else{
+        while(cache_size+ele_size > MAX_CACHE_SIZE){
+            remove_from_cache();
+        }
+
+        cache_element *ele = (cache_element*)malloc(sizeof(cache_element));
+        ele->data = (char*)malloc(size+1);
+        strcpy(ele->data, data);
+        ele->url = (char*)malloc(1+ strlen(url)*sizeof(char));
+        strcpy(ele->url,url);
+
+        ele->timeTrack = time(NULL);
+        ele->next = HEAD;  //???
+        ele->len = size;
+        HEAD = ele;
+        cache_size += ele_size;
+
+        temp_lock_val = pthread_mutex_unlock(&lock);
+
+        printf("add cache lock is unlocked\n");
+
+        return 1;
+
+
+
+    }
+
+    printf("nothing added\n");
+
+    return 0;
+
+
+
+
+}
+
+// void remove_from_cache(){  //function to remove from cache
+
+//     cache_element *p,*q, *temp;
+
+//     int temp_lock_val = pthread_mutex_lock(&lock);
+//     printf("remove cache lock acquired %d\n",temp_lock_val);
+
+//     if(!HEAD){
+//         for(q = HEAD, p = HEAD, temp =HEAD; !q->next; q= q->next){
+
+//             if(((q->next)->timeTrack) < (temp->timeTrack)){
+//                 temp = temp->next;
+//                 p = q;
+//             }
+
+           
+
+
+//         }
+
+//         if(temp == HEAD){
+//             HEAD = HEAD->next;
+
+//         }else{
+//             p->next = temp->next;
+//         }
+
+//         cache_size = cache_size - (temp->len) - sizeof(cache_element) - strlen(temp->url)-1;
+
+//         free(temp->data);
+//         free(temp->url);
+//         free(temp);
+//     }
+
+//     temp_lock_val = pthread_mutex_unlock(&lock);
+
+//     printf("remove cache lock\n");
+
+    
+
+
+// }
+
+
+// int port = 3000;
+
+// int proxy_socketID ;   // socket id
+// pthread_t tid[MAX_CLIENTS];   // threads for each client req,  thread id is stored in them
+// sem_t semaphore;  // max no of clients lock
+// pthread_mutex_t lock;  // 0/1 lock for the cache
+
+
+// cache_element* HEAD;  // global head of the linkedlist
+
+// int cache_size; // size of cache
 
 int connectToRemoteServer(char* host_add, int port_num){
     int remote_socket = socket(AF_INET, SOCK_STREAM,0);
@@ -150,7 +323,7 @@ int handle_request(int client_SocketID, ParsedRequest *request, char * tempReq){
 
     while(bytes_send > 0){
         bytes_send = send(client_SocketID, buf, bytes_send, 0);
-        for(int i = 0; i < bytes_send/sizeof(char); i++){
+        for(size_t i = 0; i < bytes_send/sizeof(char); i++){
             temp_buffer[temp_buffer_idx] = buf[i];
             temp_buffer_idx++;
         }
@@ -177,11 +350,6 @@ int handle_request(int client_SocketID, ParsedRequest *request, char * tempReq){
     free(temp_buffer);
     close(remote_socketID);
     return 0;
-    
-
-
-
-
 
 }
 
@@ -250,11 +418,11 @@ int checkHTTPversion(char* msg){
 void* thread_fn(void *socketNew){
     sem_wait(&semaphore);
     // int p;
-    int* p;  
+    int p;  
+    // cout<<"reached threa_fn";
+    sem_getvalue(&semaphore, &p);  // only p gives error
 
-    sem_getvalue(&semaphore, p);  // only p gives error
-
-    printf("semaphore value is : %d\n", *p);
+    printf("semaphore value is : %d\n", p);
 
     int *t = (int *)socketNew;   //??
     int socket = *t;    // ??
@@ -278,7 +446,7 @@ void* thread_fn(void *socketNew){
 
     char *tempReq = (char *)malloc(strlen(buffer)*sizeof(char)+1); //mem alloct and ptr for it
 
-    for(int i = 0; i < strlen(buffer); i++){
+    for(size_t i = 0; i < strlen(buffer); i++){
         tempReq[i] = buffer[i];
 
     }
@@ -333,8 +501,8 @@ void* thread_fn(void *socketNew){
     close(socket);
     free(buffer);
     sem_post(&semaphore);
-    sem_getvalue(&semaphore, p);
-    printf("semaphore for post value is %d\n", *p);
+    sem_getvalue(&semaphore, &p);
+    printf("semaphore for post value is %d\n", p);
     free(tempReq);
 
     return NULL;
@@ -359,7 +527,7 @@ int main(int argc, char* argv[]){
         
     }
 
-    printf("listening to req on %d", port);
+    printf("listening to req on %d\n", port);
 
     proxy_socketID = socket(AF_INET, SOCK_STREAM, 0);  // af_inet is for ipv4, sock_Streams is for tcp,
     
@@ -397,7 +565,7 @@ int main(int argc, char* argv[]){
   		exit(1);
  	}
 
-    printf("binding on port %d", port);
+    printf("binding on port %d\n", port);
 
     int listenf = listen(proxy_socketID, MAX_CLIENTS);  // proxy server socket starts to listen
 
@@ -436,7 +604,7 @@ int main(int argc, char* argv[]){
         inet_ntop(AF_INET, &ip_Add, str, INET6_ADDRSTRLEN);
         printf("client connected with port %d and ip address is %s\n", ntohs(client_Add.sin_port), str);   // all 4 lines above are for conversion of netword network to understandable address
 
-        // pthread_create(&tid[i], NULL, thread_fn, (void *)&connected_socketId[i]);
+        pthread_create(&tid[i], NULL, thread_fn, (void *)&connected_socketId[i]);
         // whichever client joined execute thread_fn for it,  and whichever client socket was opened use that socket, and if new client enter make a new socket for it
 
         i++;
